@@ -117,6 +117,11 @@ ul.list li:first-child{border-top:0}
 .del{flex:none;border:0;background:transparent;color:var(--muted);font-size:13px;padding:4px 6px;border-radius:6px}
 .del:hover{color:var(--bad)}
 .del.armed{color:var(--bad);font-weight:700;background:var(--sunk)}
+ul.list li.editing{display:block;padding:10px 0 12px 12px}
+ul.list li.editing::before{top:12px;bottom:12px}
+.note.editing{padding-top:12px}
+.editor{width:100%}
+.editor textarea{min-height:96px}
 .linkbtn{border:0;background:transparent;color:var(--accent);font-weight:600;padding:2px 0;font-size:13px}
 .empty{color:var(--muted);font-size:14px;padding:6px 0}
 
@@ -255,6 +260,7 @@ function pillarPicker(label){
   box.get = () => val || (filterP !== 'todos' ? filterP : viewer);
   box.sync = () => { if (!touched) val = null; draw(); };
   box.reset = () => { touched = false; val = null; draw(); };
+  box.set = v => { val = v; touched = true; draw(); };
   draw();
   return box;
 }
@@ -312,6 +318,59 @@ const store = {
   remove: (col, id) => fire(deleteDoc(doc(fs, col, id))),
 };
 const stamp = () => ({by: viewer, createdAt: Date.now()});
+
+/* ---------- edição: qualquer um dos dois edita qualquer item ---------- */
+let editing = null;
+function startEdit(col, x){
+  armed = null; editing = {col, id: x.id, el: buildEditor(col, x)}; refresh();
+  setTimeout(() => { const f = editing && editing.el.querySelector('input[type=text],textarea'); if (f){ f.focus(); const n = f.value.length; try { f.setSelectionRange(n, n); } catch {} } }, 60);
+}
+function stopEdit(){ editing = null; refresh(); }
+function editRow(col, x, tag = 'li'){
+  if (!editing || editing.col !== col || editing.id !== x.id) return null;
+  return h(tag, {class: (tag === 'li' ? 'editing' : 'note editing') + ' p-' + pOf(x)}, editing.el);
+}
+function editBtn(col, x){ return h('button', {class: 'del', type: 'button', 'aria-label': 'Editar', title: 'Editar', onclick: () => startEdit(col, x)}, '✎'); }
+function buildEditor(col, x){
+  const f = {};
+  const text = (key, val, label, extra = {}) => (f[key] = h('input', {type: 'text', id: 'edit-' + key, value: val ?? '', placeholder: label, 'aria-label': label, ...extra}));
+  const who = pillarPicker('De quem é'); who.set(pOf(x));
+  let fields = [], collect;
+  if (col === 'tasks'){
+    f.date = h('input', {type: 'date', id: 'edit-date', value: x.date, 'aria-label': 'Data'});
+    f.period = h('select', {id: 'edit-period', 'aria-label': 'Período'}, PERIODS.map(([v, t]) => h('option', {value: v}, t))); f.period.value = x.period || 'livre';
+    fields = [text('title', x.title, 'Tarefa', {class: 'grow', maxlength: 140}), f.period, f.date];
+    collect = () => { const title = f.title.value.trim(); if (!title){ toast('Escreva a tarefa.'); return null; } return {title, period: f.period.value, date: f.date.value || x.date}; };
+  } else if (col === 'habits'){
+    fields = [text('name', x.name, 'Hábito', {class: 'grow', maxlength: 80})];
+    collect = () => { const name = f.name.value.trim(); if (!name){ toast('Escreva o nome do hábito.'); return null; } return {name}; };
+  } else if (col === 'transactions'){
+    f.cat = h('select', {id: 'edit-cat', 'aria-label': 'Categoria'}, (x.type === 'entrada' ? CAT_IN : CAT_OUT).map(c => h('option', {value: c}, c))); f.cat.value = x.category;
+    f.date = h('input', {type: 'date', id: 'edit-date', value: x.date, 'aria-label': 'Data'});
+    fields = [text('desc', x.desc, 'Descrição', {class: 'grow', maxlength: 100}), text('amount', String(x.amount).replace('.', ','), 'Valor R$', {inputmode: 'decimal', style: 'width:120px'}), f.cat, f.date,
+      x.installment ? h('p', {class: 'muted', style: 'margin:0;font-size:13px;width:100%'}, `Altera só esta parcela (${x.installment.n}/${x.installment.total}).`) : null];
+    collect = () => { const desc = f.desc.value.trim(), v = toNum(f.amount.value);
+      if (!desc){ toast('Escreva uma descrição.'); return null; }
+      if (!isFinite(v) || v <= 0){ toast('Informe um valor maior que zero, ex.: 45,90.'); return null; }
+      return {desc, amount: Math.round(v * 100) / 100, category: f.cat.value, date: f.date.value || x.date}; };
+  } else if (col === 'shopping'){
+    fields = [text('item', x.item, 'Item', {class: 'grow', maxlength: 80}), text('qty', x.qty, 'Qtd.', {style: 'width:80px', maxlength: 20})];
+    collect = () => { const item = f.item.value.trim(); if (!item){ toast('Escreva o item.'); return null; } return {item, qty: f.qty.value.trim()}; };
+  } else if (col === 'notes'){
+    f.text = h('textarea', {id: 'edit-text', 'aria-label': 'Nota', maxlength: 4000}); f.text.value = x.text || '';
+    fields = [f.text];
+    collect = () => { const t = f.text.value.trim(); if (!t){ toast('A nota está vazia.'); return null; } return {text: t}; };
+  }
+  return h('form', {class: 'add editor', onsubmit: e => { e.preventDefault();
+      const patch = collect(); if (!patch) return;
+      store.update(col, x.id, {...patch, who: who.get(), editedBy: viewer, editedAt: Date.now()});
+      stopEdit(); toast('Alterações salvas.'); }},
+    ...fields,
+    h('div', {class: 'fieldrow'}, h('span', {class: 'label'}, 'De'), who,
+      h('div', {style: 'margin-left:auto;display:flex;gap:8px'},
+        h('button', {class: 'btn ghost', type: 'button', onclick: stopEdit}, 'Cancelar'),
+        h('button', {class: 'btn', type: 'submit'}, 'Salvar'))));
+}
 
 /* ---------- aba: Hoje ---------- */
 let day = today();
@@ -391,10 +450,10 @@ const Hoje = {
         const items = dayTasks.filter(x => (x.period || 'livre') === p).sort((a, b) => (a.done - b.done) || (a.createdAt || 0) - (b.createdAt || 0));
         if (!items.length) return null;
         return h('div', {class: 'grp'}, h('span', {class: 'label'}, label), h('ul', {class: 'list'}, items.map(x =>
-          h('li', {class: `p-${pOf(x)}${x.done ? ' done' : ''}`},
+          editRow('tasks', x) || h('li', {class: `p-${pOf(x)}${x.done ? ' done' : ''}`},
             h('button', {class: 'chk', type: 'button', 'aria-pressed': String(!!x.done), 'aria-label': x.done ? 'Desmarcar' : 'Marcar como feita', onclick: () => store.update('tasks', x.id, {done: !x.done})}),
             h('span', {class: 'txt', text: x.title}), chip(pOf(x)),
-            delBtn('t' + x.id, () => store.remove('tasks', x.id))))));
+            editBtn('tasks', x), delBtn('t' + x.id, () => store.remove('tasks', x.id))))));
       }));
     }
 
@@ -406,11 +465,11 @@ const Hoje = {
         const items = habs.filter(x => pOf(x) === p); if (!items.length) return null;
         return h('div', {class: 'grp'}, h('span', {class: 'label'}, l), h('ul', {class: 'list'}, items.map(x => {
           const on = !!(x.days && x.days[day]);
-          return h('li', {class: 'p-' + p},
+          return editRow('habits', x) || h('li', {class: 'p-' + p},
             h('button', {class: 'chk', type: 'button', 'aria-pressed': String(on), 'aria-label': on ? 'Desmarcar hábito' : 'Marcar hábito no dia', onclick: () => store.update('habits', x.id, {days: {[day]: !on}})}),
             h('span', {class: 'txt'}, h('span', {text: x.name}), h('br'), h('span', {class: 'streak'}, streakText(x))),
             h('span', {class: 'dots', 'aria-hidden': 'true'}, ws7.map(d => h('i', {class: x.days && x.days[d] ? 'on' : null}))),
-            delBtn('h' + x.id, () => store.remove('habits', x.id)));
+            editBtn('habits', x), delBtn('h' + x.id, () => store.remove('habits', x.id)));
         })));
       }));
     }
@@ -555,12 +614,12 @@ const Financas = {
     // lançamentos
     const rows = tx.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
     this.list.replaceChildren(h('h2', {}, 'Lançamentos', h('small', {}, `${rows.length} no mês`)),
-      rows.length ? h('ul', {class: 'list'}, rows.map(x => h('li', {class: 'p-' + pOf(x)},
+      rows.length ? h('ul', {class: 'list'}, rows.map(x => editRow('transactions', x) || h('li', {class: 'p-' + pOf(x)},
         h('span', {class: 'date', text: fmtShort(x.date)}),
         h('span', {class: 'txt'}, h('span', {text: txLabel(x)}), h('br'), h('span', {class: 'muted', style: 'font-size:12px', text: x.category})),
         chip(pOf(x)),
         h('span', {class: 'amt ' + (x.type === 'entrada' ? 'pos' : ''), text: (x.type === 'entrada' ? '+' : '−') + brl.format(x.amount)}),
-        ...txDelete(x))))
+        editBtn('transactions', x), ...txDelete(x))))
       : emptyMsg('Nenhum lançamento neste mês. Use o formulário acima e escolha de quem é: Marcelo, Carla ou Nós dois.', 'Nenhum lançamento no mês'));
   }
 };
@@ -593,10 +652,10 @@ const Compras = {
     const items = data.shopping.filter(pass).sort((a, b) => (a.done - b.done) || (a.createdAt || 0) - (b.createdAt || 0));
     const pend = items.filter(x => !x.done), got = items.filter(x => x.done);
     this.title.replaceChildren('Lista de compras', h('small', {}, pend.length ? `${pend.length} para comprar` : ''));
-    const row = x => h('li', {class: `p-${pOf(x)}${x.done ? ' done' : ''}`},
+    const row = x => editRow('shopping', x) || h('li', {class: `p-${pOf(x)}${x.done ? ' done' : ''}`},
       h('button', {class: 'chk', type: 'button', 'aria-pressed': String(!!x.done), 'aria-label': x.done ? 'Voltar para a lista' : 'Marcar como comprado', onclick: () => store.update('shopping', x.id, {done: !x.done})}),
       h('span', {class: 'txt', text: x.item}), x.qty ? h('span', {class: 'muted num', text: x.qty}) : null, chip(pOf(x)),
-      delBtn('s' + x.id, () => store.remove('shopping', x.id)));
+      editBtn('shopping', x), delBtn('s' + x.id, () => store.remove('shopping', x.id)));
     if (!items.length){ this.box.replaceChildren(emptyMsg('A lista está vazia. Quem lembrar de algo adiciona aqui, dizendo se é do Marcelo, da Carla ou da casa.', 'Nenhum item')); return; }
     const clearKey = 'clear-shop';
     this.box.replaceChildren(
@@ -624,9 +683,10 @@ const Notas = {
     this.who.sync();
     const notes = data.notes.filter(pass).sort((a, b) => (b.pinned - a.pinned) || (b.createdAt || 0) - (a.createdAt || 0));
     if (!notes.length){ this.box.replaceChildren(emptyMsg('Nenhuma nota ainda. O que um escrever, o outro vê na hora.', 'Nenhuma nota')); return; }
-    this.box.replaceChildren(...notes.map(x => h('div', {class: `note p-${pOf(x)}${x.pinned ? ' pinned' : ''}`},
+    this.box.replaceChildren(...notes.map(x => editRow('notes', x, 'div') || h('div', {class: `note p-${pOf(x)}${x.pinned ? ' pinned' : ''}`},
       h('p', {text: x.text}),
       h('div', {class: 'meta'}, chip(pOf(x)), h('span', {text: x.createdAt ? new Date(x.createdAt).toLocaleDateString('pt-BR', {day: 'numeric', month: 'short'}) : ''}),
+        h('button', {class: 'linkbtn', type: 'button', onclick: () => startEdit('notes', x)}, 'Editar'),
         h('button', {class: 'linkbtn', type: 'button', onclick: () => store.update('notes', x.id, {pinned: !x.pinned})}, x.pinned ? 'Desafixar' : 'Fixar no topo'),
         h('button', {class: 'linkbtn', type: 'button', onclick: async () => { await store.add('tasks', {title: x.text.split('\n')[0].slice(0, 140), date: today(), period: 'livre', who: pOf(x), done: false, ...stamp()}); toast('Virou tarefa de hoje.'); }}, 'Virar tarefa'),
         delBtn('n' + x.id, () => store.remove('notes', x.id))))));
@@ -644,10 +704,17 @@ function mountTab(){
   VIEWS[tab].mount(main); refresh();
 }
 document.getElementById('tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (!b) return;
-  tab = b.dataset.tab; armed = null; try { localStorage.setItem('rad-tab', tab); } catch {} mountTab(); window.scrollTo(0, 0); });
+  tab = b.dataset.tab; armed = null; editing = null; try { localStorage.setItem('rad-tab', tab); } catch {} mountTab(); window.scrollTo(0, 0); });
 
 let raf = 0, mounted = false;
-function refresh(){ if (raf || !mounted) return; raf = requestAnimationFrame(() => { raf = 0; VIEWS[tab].update(); renderFilter(); renderBanner(); }); }
+function refresh(){ if (raf || !mounted) return; raf = requestAnimationFrame(() => { raf = 0;
+  // mantém o foco e o cursor de quem está digitando quando chega atualização do outro
+  const ae = document.activeElement; let sel = null; try { sel = [ae.selectionStart, ae.selectionEnd]; } catch {}
+  VIEWS[tab].update(); renderFilter(); renderBanner();
+  if (ae && ae !== document.body && ae.isConnected && document.activeElement !== ae){
+    ae.focus({preventScroll: true}); try { if (sel && sel[0] != null) ae.setSelectionRange(sel[0], sel[1]); } catch {}
+  }
+}); }
 function renderBanner(){
   const b = document.getElementById('banner');
   const msg = !navigator.onLine ? 'Sem internet agora. O que vocês anotarem fica salvo no aparelho e sobe sozinho quando a conexão voltar.' : '';
