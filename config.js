@@ -1,13 +1,14 @@
 // Configuração do Rotina a Dois.
-// 1) Cole aqui o "firebaseConfig" do seu app web no Firebase
-//    (Console do Firebase > Configurações do projeto > Seus apps > SDK setup and configuration > Config).
+// 1) Configuração do app web no Firebase (projeto controlegastos-dfcca).
+//    A apiKey do Firebase web não é secreta: quem protege os dados são as regras do Firestore.
 export const FIREBASE_CONFIG = {
-  apiKey: "COLE_AQUI",
-  authDomain: "SEU-PROJETO.firebaseapp.com",
-  projectId: "SEU-PROJETO",
-  storageBucket: "SEU-PROJETO.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "COLE_AQUI"
+  apiKey: "AIzaSyDf3ljBbayFrHqbUCedIq188vmtgyUYZ7s",
+  authDomain: "controlegastos-dfcca.firebaseapp.com",
+  projectId: "controlegastos-dfcca",
+  storageBucket: "controlegastos-dfcca.firebasestorage.app",
+  messagingSenderId: "145667402567",
+  appId: "1:145667402567:web:39377eb0f559fb26a33a62",
+  measurementId: "G-RX8EEXR3CN"
 };
 
 // 2) Os dois e-mails que podem entrar, e quem é cada um.
