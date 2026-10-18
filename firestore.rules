@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Só o Marcelo e a Carla leem e gravam (os mesmos e-mails do config.js).
+    function casal() {
+      return request.auth != null
+        && request.auth.token.email in ['marcelinhoskt13@gmail.com', 'carlards26@gmail.com'];
+    }
+    match /{document=**} {
+      allow read, write: if casal();
+    }
+  }
+}
